@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    env_file:
+      - .env.rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - app-network
+
+  mysql:
+    image: mysql:8.0
+    container_name: mysql
+    env_file:
+      - .env.mysql
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d
+    networks:
+      - app-network
+
+  php-producer:
+    build:
+      context: ./php-producer
+    container_name: php-producer
+    ports:
+      - "8080:80"       
+    volumes:
+      - ./php-producer:/var/www/html   
+      - ./storage:/app/storage 
+    env_file:
+      - ./php-producer/.env.php
+    depends_on:
+      - rabbitmq
+    networks:
+      - app-network
+
+  python-consumer:
+    build:
+      context: ./python-consumer
+    container_name: python-consumer
+    volumes:
+      - ./python-consumer:/app
+      - ./storage:/app/storage  
+    env_file:
+      - ./python-consumer/.env.python
+    depends_on:
+      - rabbitmq
+    networks:
+      - app-network
+    command: python /app/main.py
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  rabbitmq_data:
+  mysql_data:
