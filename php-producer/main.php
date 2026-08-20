@@ -5,10 +5,10 @@ require_once __DIR__ . '/vendor/autoload.php';
 use PhpAmqpLib\Connection\AMQPStreamConnection;
 use PhpAmqpLib\Message\AMQPMessage;
 
-$host = getenv('RABBITMQ_HOST') ?: 'rabbitmq';
-$port = getenv('RABBITMQ_PORT') ?: 5672;
-$user = getenv('RABBITMQ_USER') ?: 'user';
-$pass = getenv('RABBITMQ_PASS') ?: 'password';
+$host = getenv('RABBITMQ_HOST');
+$port = getenv('RABBITMQ_PORT');
+$user = getenv('RABBITMQ_USER');
+$pass = getenv('RABBITMQ_PASS');
 
 $connection = new AMQPStreamConnection($host, $port, $user, $pass);
 $channel = $connection->channel();

@@ -143,7 +143,7 @@ def calculate_pixels(x1, y1, x2, y2):
 # ========== УЗЕЛ КАЛИБРОВКИ ==========
 async def scale_node(image_path):
     try:
-        model = get_yolo_model("models/model_forks.pt")
+        model = get_yolo_model("models/model_calibrations.pt")
         img = load_image(image_path)
         results = model(img)
 
@@ -186,7 +186,7 @@ async def analysis_node(state: SystemState) -> dict:
         return {"messages": [AIMessage(content="❌ Масштаб не задан.")]}
 
     try:
-        model = get_yolo_model("models/food_analysis.pt")
+        model = get_yolo_model("models/model_food.pt")
         img = load_image(image_path)
         results = model(img, verbose=False)
 
