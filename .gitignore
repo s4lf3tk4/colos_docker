@@ -72,3 +72,4 @@ Thumbs.db
 *.tmp
 *.temp
 cache/
+!.env.*.example
