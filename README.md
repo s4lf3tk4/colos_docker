@@ -79,7 +79,7 @@ ___
 
 5) Запуск контейнеров
 
-- `docker-compose build --no-cache` 
+- `docker-compose build` 
 - `docker-compose up -d`
 - проверить запуск: `docker-compose ps`:
   
