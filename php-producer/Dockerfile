@@ -1,24 +1,33 @@
 FROM php:8.3-apache
 
-# Системные зависимости (только то, что нужно для компиляции расширений и Composer)
+# Системные зависимости
 RUN apt-get update && apt-get install -y \
     git unzip zip libzip-dev default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# PHP-расширения (обязательные)
+# PHP-расширения
 RUN docker-php-ext-install sockets zip bcmath mysqli
 
-# Composer (из официального образа)
+# Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
-# Копируем код
-COPY . /var/www/html/
+# Устанавливаем рабочую директорию
+WORKDIR /var/www/html
 
-RUN rm -rf /var/www/html/vendor
-# Устанавливаем зависимости через Composer
-RUN composer install --no-dev --no-scripts --no-autoloader -v
+# Копируем только composer.json и composer.lock (для кеширования)
+COPY composer.json ./
+
+# Устанавливаем зависимости (генерируем autoloader)
+RUN composer install --no-dev --no-scripts --optimize-autoloader
+
+# Копируем остальной код
+COPY . .
 
 # Права для Apache
-RUN chown -R www-data:www-data /var/www/html
+RUN chown -R www-data:www-data /var/www/html \
+    && chmod -R 755 /var/www/html
+
+# Включаем mod_rewrite (если нужно)
+RUN a2enmod rewrite
 
 EXPOSE 80

@@ -76,13 +76,6 @@ class FullAnalysis extends AbstractPhotoAnalysis
             $result = $response['result'];
             $output = ""; 
 
-                if (isset($result['sizes']) && is_array($result['sizes']) && !empty($result['sizes'])) {
-                    $output .= "Размеры объектов:\n";
-                    foreach ($result['sizes'] as $size) {
-                        $output .= "$size\n";
-                    }
-                }
-
                 if (isset($result['message']) && !empty($result['message'])) {
                     $output .= "\n" . $result['message'] . "\n";
                 }

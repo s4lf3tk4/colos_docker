@@ -19,11 +19,7 @@ class SystemState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     current_message: str
     message_type: str
-    detections: List[dict]
     image_path: str
-    scale: float
-    size_info: List[str]
-    result_calories: str
     ai_response: str
 
 
@@ -51,12 +47,7 @@ classification_prompt = PromptTemplate(template = """Определи тип с�
 )
 
 llm = ChatOllama(
-    model="mistral",
-    base_url=OLLAMA_BASE_URL,
-    num_predict=2000
-)
-llm_food = ChatOllama(
-    model="llama3.2:3b",
+    model="qwen3-vl:2b-instruct",
     base_url=OLLAMA_BASE_URL,
     num_predict=2000
 )

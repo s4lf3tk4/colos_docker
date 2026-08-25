@@ -24,6 +24,10 @@ class Settings(BaseSettings):
         alias="OLLAMA_BASE_URL",
         description="url для ollama llm, llm_food"
         )
+    qwen_model: str = Field(
+        alias = "QWEEN_VL_MODEL",
+        description = "qween модель"
+    )
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -36,3 +40,4 @@ RABBITMQ_PORT = settings.port
 RABBITMQ_USER = settings.user
 RABBITMQ_PASS = settings.password
 OLLAMA_BASE_URL = settings.url
+QWEEN_VL_MODEL = settings.qwen_model

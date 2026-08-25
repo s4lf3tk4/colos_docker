@@ -4,12 +4,10 @@ from langgraph.graph import END, START, StateGraph
 from langchain_core.messages import HumanMessage
 from core import SystemState
 from graph import (
-    clear_state,
     classify_message,
     router_after_classification,
     food,
     analysis_node,
-    analyze_calories
 )
 
 graph = StateGraph(SystemState)
@@ -26,9 +24,7 @@ async def init_app():
 
 graph.add_node("classify_message", classify_message)
 graph.add_node("analysis_node", analysis_node)
-graph.add_node("analyze_calories", analyze_calories)
 graph.add_node("food", food)
-graph.add_node("clear_state", clear_state)
 
 
 graph.add_edge(START, "classify_message")
@@ -40,8 +36,7 @@ graph.add_conditional_edges(
         "food": "food"
     }
 )
-graph.add_edge("analysis_node", "analyze_calories")
-graph.add_edge("analyze_calories", END)
+graph.add_edge("analysis_node", END)
 graph.add_edge("food", END)
 
 async def graph_start(response_text: str, user_id: str) -> dict:

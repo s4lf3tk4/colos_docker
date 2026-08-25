@@ -48,18 +48,16 @@ async def main():
 
                     result = await graph_start(request, user_id)
 
-                    last_message = result["messages"][-1] if result.get("messages") else None
-                    output_text = last_message.content if last_message else ""
+                    final_response_ai = result["ai_response"]
+
 
                     sizes = result.get("size_info", [])
 
-                    # Формируем ответ (уже сериализуемый)
                     response = {
                         "correlation_id": correlation_id,
                         "status": "ok",
                         "result": {
-                            "message": output_text,
-                            "sizes": sizes,
+                            "message": final_response_ai,
                         }
                     }
 

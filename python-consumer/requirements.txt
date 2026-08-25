@@ -12,3 +12,4 @@ langgraph-checkpoint-sqlite
 pi-heif
 pydantic
 pydantic-settings
+pillow-heif

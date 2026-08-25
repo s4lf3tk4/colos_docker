@@ -1,13 +1,13 @@
-from core import SystemState, llm, llm_food, classification_prompt, classification_parser
+from core import SystemState, llm, classification_prompt, classification_parser, OLLAMA_BASE_URL, QWEEN_VL_MODEL
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+# from ultralytics import YOLO
+# from PIL import Image
+# from io import BytesIO
 
-from ultralytics import YOLO
+import base64
+import requests
 from PIL import Image
 from io import BytesIO
-
-import requests
-from bs4 import BeautifulSoup
-from ddgs import DDGS
 
 import asyncio
 import json
@@ -58,32 +58,6 @@ def classify_message(state: SystemState) -> dict:
         return {"message_type": "food"}
 
 
-# def classify_message(state: SystemState) -> dict:
-#     user_input = state["current_message"]
-#     classification_chain = classification_prompt | llm | classification_parser
-#     try:
-#         classification_result = classification_chain.invoke({"user_input": user_input})
-#         message_type = classification_result.get("message_type")
-#         if not message_type:
-#             print("ОШИБКА В КЛАССИФИКАЦИИ")
-#         confidence = classification_result.get("confidence", 0.0)
-#     except Exception as e:
-#         print(f"Ошибка классификации: {e}. Используем 'food' по умолчанию.")
-#         message_type = "food"
-#         confidence = 0.0
-
-#     if message_type == "photo":
-#         print("PHOTO")
-#         return {
-#             "message_type": message_type,
-#             "image_path": state["current_message"],
-#             "messages": [HumanMessage(content=f"Классифицировано как {message_type}")]
-#         }
-#     return {
-#         "message_type": message_type
-#     }
-
-
 def router_after_classification(state: SystemState):
     message_type = state["message_type"]
     print(f"В router {message_type}")
@@ -114,203 +88,98 @@ async def food(state: SystemState):
     }
 
 
-# YOLO
-
-from ultralytics import YOLO
-from PIL import Image
-from io import BytesIO
-import requests
-from langchain_core.messages import HumanMessage
-
-def get_yolo_model(model_path: str = "best.pt"):
-    if model_path not in _yolo_models:
-        _yolo_models[model_path] = YOLO(model_path)
-    return _yolo_models[model_path]
-
-def load_image(source: str):
-    if source.startswith(("http://", "https://")):
-        response = requests.get(source, timeout=10)
-        response.raise_for_status()
-        return Image.open(BytesIO(response.content))
-    else:
-        return Image.open(source)
-
-def calculate_pixels(x1, y1, x2, y2):
-    width = abs(x2 - x1)
-    height = abs(y2 - y1)
-    return max(width, height)
-
-# ========== УЗЕЛ КАЛИБРОВКИ ==========
-async def scale_node(image_path):
+def load_image_to_base64(source: str, max_size: int = 600) -> str:
+    """
+    Загружает изображение с ПРИНУДИТЕЛЬНЫМ сжатием
+    """
     try:
-        model = get_yolo_model("models/model_calibrations.pt")
-        img = load_image(image_path)
-        results = model(img)
+        print(f"📥 Загрузка: {source[:100]}...", flush=True)
 
-        fork_pixels = None
-        for r in results:
-            boxes = r.boxes
-            if boxes is not None:
-                for box in boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    cls = int(box.cls[0])
-                    if model.names[cls] == "fork":
-                        fork_pixels = calculate_pixels(x1, y1, x2, y2)
-                if fork_pixels is not None:
-                    break
+        if source.startswith(("http://", "https://")):
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Referer': 'https://vk.com/'
+            }
+            response = requests.get(source, headers=headers, timeout=30)
+            response.raise_for_status()
+            img = Image.open(BytesIO(response.content))
+        else:
+            img = Image.open(source)
 
-        if fork_pixels is None:
-            return None
+        print(f"📥 Исходный размер: {img.size}", flush=True)
 
-        REAL_FORK_LENGTH_CM = 11.0
-        scale = fork_pixels / REAL_FORK_LENGTH_CM
-        print(f"\n\nМасштаб: {scale:.2f} px/см (вилка {fork_pixels:.0f} px)\n\n")
+        # ВСЕГДА сжимаем
+        ratio = min(max_size / img.size[0], max_size / img.size[1])
+        if ratio < 1:
+            new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+            print(f"📥 Сжатие: {img.size} -> {new_size}", flush=True)
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
 
-        return scale
+        # Конвертация в RGB
+        if img.mode in ('RGBA', 'LA', 'P'):
+            img = img.convert('RGB')
+
+        # Сохранение с высоким сжатием
+        buffer = BytesIO()
+        img.save(buffer, format='JPEG', quality=75, optimize=True)
+        image_bytes = buffer.getvalue()
+
+        print(f"📥 Размер: {len(image_bytes) / 1024:.2f} KB", flush=True)
+
+        return base64.b64encode(image_bytes).decode('utf-8')
 
     except Exception as e:
-        return None
-# ========== УЗЕЛ АНАЛИЗА ==========
+        print(f"❌ Ошибка: {e}", flush=True)
+        raise ValueError(f"Не удалось загрузить изображение: {e}")
+# AI analyze
 
-EXCLUDED_CLASSES = {"fork", "spoon", "knife", "dining table", "cup", "bowl"}
+def analysis_node(state: SystemState) -> dict:
 
-async def analysis_node(state: SystemState) -> dict:
-    print("В func analysis")
     image_path = state.get("image_path")
-    print(f"image_path = {image_path}")
-    if not image_path:
-        return {"messages": [HumanMessage(content="❌ Нет пути к изображению.")]}
+    prompt = (
+        "Ты — помощник по анализу еды. Опиши, что изображено на фотографии. "
+        "Назови блюдо, перечисли основные ингредиенты, укажи примерную калорийность "
+        "в килокалориях на 100 грамм или на порцию. Ответ дай в виде короткого текста, "
+        "без лишней информации."
+    )
 
-    scale = await scale_node(image_path)
-    if scale is None:
-        return {"messages": [AIMessage(content="❌ Масштаб не задан.")]}
-
-    try:
-        model = get_yolo_model("models/model_food.pt")
-        img = load_image(image_path)
-        results = model(img, verbose=False)
-
-        detections = []
-        for r in results:
-            boxes = r.boxes
-            if boxes is not None:
-                for box in boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].tolist()
-                    conf = float(box.conf[0])
-                    cls = int(box.cls[0])
-                    class_name = model.names[cls]
-                    if class_name.lower() in EXCLUDED_CLASSES:
-                        continue
-                    detections.append({
-                        "class": class_name,
-                        "confidence": conf,
-                        "bbox": [x1, y1, x2, y2]
-                    })
-
-        print(f"Результаты анализа (масштаб: {scale:.2f} px/см):")
-        msg_lines = []
-        for det in detections:
-            class_name = det["class"]
-            x1, y1, x2, y2 = det["bbox"]
-            width_px = abs(x2 - x1)
-            height_px = abs(y2 - y1)
-            real_length = max(width_px, height_px) / scale
-            real_width = min(width_px, height_px) / scale
-            real_size = real_length * real_width * real_width/4
-            line = f"• {class_name}: {real_size:.1f} см^3"
-            msg_lines.append(line)
-
-        if not detections:
-            print("Объектов не обнаружено.")
-            msg_lines.append("Объектов не обнаружено.")
-
-        return {
-            "messages": [HumanMessage(content="\n".join(msg_lines))],
-            "detections": detections,
-            "size_info": msg_lines
+    image_base64 = load_image_to_base64(image_path)
+    url = f"{OLLAMA_BASE_URL}/api/chat"
+    payload = {
+        "model": QWEEN_VL_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt,
+                "images": [image_base64]
+            }
+        ],
+        "stream": False,
+        "options": {
+            "num_ctx": 2048,  # ← Ограничить контекст
+            "temperature": 0.3,  # ← Снизить креативность (0.1-0.5)
+            "top_p": 0.9,
+            "seed": 42  # ← Фиксированный сид для стабильности
         }
-
-    except Exception as e:
-        return {
-            "messages": [HumanMessage(content=f"❌ Ошибка анализа: {e}")]
-        }
-
-async def analyze_calories(state: SystemState) -> dict:
-    # Извлекаем список классов из детекций
-    detections = state.get("detections", [])
-    if not detections:
-        last_message = state["messages"][-1]
-        # Извлекаем содержимое последнего сообщения
-        last_text = last_message.content if hasattr(last_message, 'content') else str(last_message)
-        new_message = last_text + "\nНет объектов для расчёта калорий."
-        return {"messages": [AIMessage(content=new_message)]}
-
-    # Собираем уникальные названия продуктов
-    product_names = list(set(d["class"] for d in detections))
-
-    calorie_info = []
-    for product in product_names:
-        search_result = web_search(f"калорийность {product} на 100 грамм")
-        prompt = f"""
-        Ты - нутрициолог. На основе следующей информации определи примерное количество калорий на 100 грамм продукта '{product}'.
-
-        Информация из поиска:
-        {search_result}
-
-        Если информации недостаточно, используй свои знания. Ответь только числом (ккал на 100 г), без пояснений.
-        """
-        response = await llm.ainvoke([HumanMessage(content=prompt)])
-        calorie_value = response.content.strip()
-        calorie_info.append(f"{product}: {calorie_value} ккал/100г")
-
-    result_message = "Расчёт калорийности:\n" + "\n".join(calorie_info)
-
-    return {
-        "messages": [AIMessage(content=result_message)],
-        "result_calories": result_message
     }
-
-def web_search(query: str) -> str:
     try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=5))
-            if not results:
-                return "Ничего не найдено."
 
-            for idx, result in enumerate(results):
-                url = result.get('href')
-                if not url:
-                    continue
-                try:
-                    resp = requests.get(url, timeout=10)
-                    soup = BeautifulSoup(resp.text, 'html.parser')
+        response = requests.post(url, json=payload, timeout=180)
+        response.raise_for_status()
+        result = response.json()
+        content = result.get('message', {}).get('content', '').strip()
+        if not content:
+            content = "Не удалось распознать содержимое изображения."
+            return {"ai_response": content}
 
-                    # Извлекаем все параграфы
-                    paragraphs = soup.find_all('p')
-                    if paragraphs:
-                        full_text = ' '.join(p.get_text(strip=True) for p in paragraphs)
-                    else:
-                        full_text = soup.body.get_text(separator='\n', strip=True) if soup.body else ""
-
-                    max_chars = 5000
-                    if len(full_text) > max_chars:
-                        full_text = full_text[:max_chars]
-
-                    if full_text.strip():
-                        return f"Источник: {url}\n\n{full_text}"
-
-                except Exception as e:
-                    print(f"Не удалось загрузить {url}: {e}")
-                    continue
-
-            if results:
-                first = results[0]
-                return f"{first.get('title', 'Без заголовка')}: {first.get('body', 'Нет описания')}"
-            else:
-                return "Не удалось получить содержимое ни с одного сайта."
+        return {"ai_response": content,
+                "messages": [AIMessage(content = content)]
+        }
 
     except Exception as e:
-        return f"Ошибка поиска: {e}"
+        text_error = f"Ошибка при выполнения анализа: {e}"
+        return {"ai_response": text_error}
+
 
 
 def clear_state(state: SystemState) -> dict:
