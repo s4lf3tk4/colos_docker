@@ -7,10 +7,9 @@ COPY core/core.py ./core.py
 COPY core/settings.py ./settings.py
 COPY serializer.py .
 COPY graph_init.py .
+COPY rabbitmq.py .
 COPY main.py .
 
-# Копируем модели
-COPY models/ ./models/
 
 # Копируем requirements и устанавливаем
 COPY requirements.txt .

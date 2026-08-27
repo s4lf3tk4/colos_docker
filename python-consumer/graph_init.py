@@ -7,7 +7,7 @@ from graph import (
     classify_message,
     router_after_classification,
     food,
-    analysis_node,
+    analysis_node
 )
 
 graph = StateGraph(SystemState)
@@ -47,11 +47,7 @@ async def graph_start(response_text: str, user_id: str) -> dict:
         "messages": [HumanMessage(content=response_text)],
         "current_message": response_text,
         "message_type": "",
-        "detections" : [],
         "image_path":"",
-        "scale": "",
-        "size_info":[],
-        "result_calories": "",
         "ai_response": ""
 
     }

@@ -1,8 +1,9 @@
-from .core import SystemState, llm, classification_prompt, classification_parser
-from .settings import  RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASS, OLLAMA_BASE_URL, QWEEN_VL_MODEL
+from .core import SystemState
+from .settings import  RABBITMQ_HOST, RABBITMQ_PORT, RABBITMQ_USER, RABBITMQ_PASS, QWEN_PICT_MODEL, QWEN_PICT_URL, QWEN_TEXT_URL, QWEN_TEXT_MODEL
 
 __all__ = [
-    "SystemState", "llm", "classification_prompt", "classification_parser",
-    "RABBITMQ_HOST", "RABBITMQ_PORT", "RABBITMQ_USER", "RABBITMQ_PASS", "OLLAMA_BASE_URL", "QWEEN_VL_MODEL"
+    "SystemState",
+    "RABBITMQ_HOST", "RABBITMQ_PORT", "RABBITMQ_USER", "RABBITMQ_PASS",
+    "QWEN_PICT_MODEL", "QWEN_PICT_URL", "QWEN_TEXT_URL", "QWEN_TEXT_MODEL"
 
 ]

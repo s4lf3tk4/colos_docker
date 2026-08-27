@@ -1,15 +1,13 @@
 aio-pika
 langchain
-langchain-ollama
 langgraph
-ultralytics
 pillow
 requests
 beautifulsoup4
 ddgs
 aiosqlite
 langgraph-checkpoint-sqlite
-pi-heif
 pydantic
 pydantic-settings
 pillow-heif
+aiohttp

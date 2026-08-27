@@ -32,10 +32,10 @@ services:
       context: ./php-producer
     container_name: php-producer
     ports:
-      - "8080:80"       
+      - "8080:80"
     volumes:
-      - ./php-producer:/var/www/html   
-      - ./storage:/app/storage 
+      - ./php-producer:/var/www/html
+      - ./storage:/app/storage
     env_file:
       - ./php-producer/.env.php
     depends_on:
@@ -43,17 +43,108 @@ services:
     networks:
       - app-network
 
+
+ # ============ МОДЕЛИ (vLLM) ============
+
+  # Qwen2.5-7B (текстовая модель) — порт 8000
+  # qwen:
+  #   image: vllm/vllm-openai:latest
+  #   container_name: qwen-text
+  #   runtime: nvidia  # ← ДОБАВИТЬ!
+  #   environment:
+  #     - HF_TOKEN=${HF_TOKEN}  # ← ДОБАВИТЬ!
+  #     - HF_HOME=/cache/huggingface
+  #   volumes:
+  #     - hf_cache:/cache/huggingface  # ← КЕШ ДЛЯ МОДЕЛЕЙ
+  #   ports:
+  #     - "8000:8000"
+  #   command:
+  #     - "--model"
+  #     - "Qwen/Qwen2.5-7B-Instruct"
+  #     - "--gpu-memory-utilization"
+  #     - "0.5"
+  #     - "--max-model-len"
+  #     - "16384"
+  #     - "--port"
+  #     - "8000"
+  #     - "--host"
+  #     - "0.0.0.0"
+  #   shm_size: "2g"  # ← ДОБАВИТЬ!
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   networks:
+  #     - app-network
+  #   restart: unless-stopped
+
+  # Qwen3-VL-4B (мультимодальная модель) — порт 8001
+  qwen-vl:
+    image: vllm/vllm-openai:latest
+    container_name: qwen-vl
+    runtime: nvidia
+    shm_size: "4g"
+    env_file:
+      - .env.huggingface
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - VLLM_WSL2_ENABLE_PIN_MEMORY=1
+      - VLLM_DRIVER=paravirt
+      - VLLM_USE_V2_MODEL_RUNNER=0
+      - HF_TOKEN=${HF_TOKEN}
+    ports:
+      - "8001:8000"
+
+    command:
+        - "--model"
+        - "Qwen/Qwen3-VL-4B-Instruct-AWQ"
+        - "--quantization"
+        - "awq"  # ← ОБЯЗАТЕЛЬНО!
+        - "--host"
+        - "0.0.0.0"
+        - "--port"
+        - "8000"
+        - "--gpu-memory-utilization"
+        - "0.8"  # ← увеличить до 0.8
+        - "--max-model-len"
+        - "4096"
+        - "--dtype"
+        - "half"
+        - "--trust-remote-code"
+        - "--enforce-eager"
+        - "--disable-custom-all-reduce"
+        - "--distributed-executor-backend"
+        - "mp"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - app-network
+    restart: unless-stopped
+
+
   python-consumer:
     build:
       context: ./python-consumer
     container_name: python-consumer
     volumes:
       - ./python-consumer:/app
-      - ./storage:/app/storage  
+      - ./storage:/app/storage
     env_file:
       - ./python-consumer/.env.python
     depends_on:
       - rabbitmq
+      #- qwen
+      - qwen-vl
     networks:
       - app-network
     command: python /app/main.py
@@ -65,3 +156,4 @@ networks:
 volumes:
   rabbitmq_data:
   mysql_data:
+  hf_cache:

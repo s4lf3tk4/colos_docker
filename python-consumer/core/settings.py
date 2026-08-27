@@ -20,14 +20,23 @@ class Settings(BaseSettings):
         alias="RABBITMQ_PASS",
         description="pass для rabbitmq"
         )
-    url: str = Field(
-        alias="OLLAMA_BASE_URL",
-        description="url для ollama llm, llm_food"
-        )
-    qwen_model: str = Field(
-        alias = "QWEEN_VL_MODEL",
-        description = "qween модель"
+    qwen_text_model: str = Field(
+        alias = "QWEN_TEXT_MODEL",
+        description = "qwen модель для текста"
     )
+    qwen_pict_model: str = Field(
+        alias = "QWEN_PICT_MODEL",
+        description = "qwen модель для картинок"
+    )
+    qwen_text_url: str = Field(
+        alias = "QWEN_TEXT_URL",
+        description = "qwen url для анализа текста"
+    )
+    qwen_pict_url: str = Field(
+        alias = "QWEN_PICT_URL",
+        description = "qwen url для анализа картинки"
+    )
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
@@ -39,5 +48,9 @@ RABBITMQ_HOST = settings.host
 RABBITMQ_PORT = settings.port
 RABBITMQ_USER = settings.user
 RABBITMQ_PASS = settings.password
-OLLAMA_BASE_URL = settings.url
-QWEEN_VL_MODEL = settings.qwen_model
+
+QWEN_PICT_MODEL=settings.qwen_pict_model
+QWEN_PICT_URL=settings.qwen_pict_url
+
+QWEN_TEXT_URL=settings.qwen_text_url
+QWEN_TEXT_MODEL=settings.qwen_text_model
