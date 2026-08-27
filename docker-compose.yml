@@ -81,7 +81,7 @@ services:
   #     - app-network
   #   restart: unless-stopped
 
-  # Qwen3-VL-4B (мультимодальная модель) — порт 8001
+
   qwen-vl:
     image: vllm/vllm-openai:latest
     container_name: qwen-vl
@@ -90,35 +90,31 @@ services:
     env_file:
       - .env.huggingface
     environment:
+      - VLLM_WSL2_ENABLE_PIN_MEMORY=1
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
-      - VLLM_WSL2_ENABLE_PIN_MEMORY=1
-      - VLLM_DRIVER=paravirt
-      - VLLM_USE_V2_MODEL_RUNNER=0
       - HF_TOKEN=${HF_TOKEN}
     ports:
       - "8001:8000"
 
     command:
-        - "--model"
-        - "Qwen/Qwen3-VL-4B-Instruct-AWQ"
-        - "--quantization"
-        - "awq"  # ← ОБЯЗАТЕЛЬНО!
-        - "--host"
-        - "0.0.0.0"
-        - "--port"
-        - "8000"
-        - "--gpu-memory-utilization"
-        - "0.8"  # ← увеличить до 0.8
-        - "--max-model-len"
-        - "4096"
-        - "--dtype"
-        - "half"
-        - "--trust-remote-code"
-        - "--enforce-eager"
-        - "--disable-custom-all-reduce"
-        - "--distributed-executor-backend"
-        - "mp"
+      - "--model"
+      - "JEILDLWLRMA/Qwen3-VL-4B-Instruct-NVFP4"
+      - "--quantization"
+      - "compressed-tensors"
+      - "--kv-cache-dtype"
+      - "fp8"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8000"
+      - "--gpu-memory-utilization"
+      - "0.8"
+      - "--max-model-len"
+      - "1024"
+      - "--dtype"
+      - "half"
+      - "--trust-remote-code"
 
     deploy:
       resources:
@@ -143,7 +139,6 @@ services:
       - ./python-consumer/.env.python
     depends_on:
       - rabbitmq
-      #- qwen
       - qwen-vl
     networks:
       - app-network
