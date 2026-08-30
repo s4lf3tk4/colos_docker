@@ -98,6 +98,7 @@ services:
       - "8001:8000"
 
     command:
+      - "--enforce-eager"
       - "--model"
       - "JEILDLWLRMA/Qwen3-VL-4B-Instruct-NVFP4"
       - "--quantization"

@@ -6,7 +6,7 @@ from serializer import convert_to_serializable
 from graph_init import graph_start
 
 
-MAX_CONCURRENT = 5
+MAX_CONCURRENT = 7
 semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 
 async def process_message(message, channel):
