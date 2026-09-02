@@ -55,7 +55,7 @@ async def food(state: Dict[str, Any]) -> Dict[str, Any]:
         "что ты специалист по питанию, и предложи помощь в этой области. Всегда давай полезные "
         "и точные советы, основанные на научных данных. Отвечай на русском языке."
     )
-    messages = state.get("messages", [])
+    messages = messages[-3:] if len(messages) > 3 else messages
     if not messages:
         error_msg = "Нет сообщений для ответа."
         return {"ai_response": error_msg}

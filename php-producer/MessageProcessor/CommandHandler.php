@@ -1,12 +1,16 @@
 <?php
+    require_once __DIR__ . '/../Service/TextAnalysis.php';
+
 
     class CommandHandler{
 
         private $commands = [];
         private Logger $logger;
-        public function __construct(array $commands){
+        private UserRepository $userRepository;
+        public function __construct(array $commands, UserRepository $userRepository){
             $this->commands = $commands;
             $this->logger = new Logger('CommandHandler_error.log');
+            $this->userRepository = $userRepository;  
         }
         
     public function handle($message, $peer_id){
@@ -53,8 +57,25 @@
 }
 
     private function handleUnknownCommand($message, $peer_id){
-        $this->sendResponse($peer_id, "Отвечаем на ваще сообщение...");
-        
+        // $this->sendResponse($peer_id, "Отвечаем на ваще сообщение...");
+        $user = new UserState($peer_id, $this->userRepository);
+        $userData = $user->handle();
+        if ($userData['requests'] > 0 || $userData['status'] === 'prem'){
+            $text_analysis = new TextAnalysis($message, $peer_id);
+            $text_analysis->getAnalysis();
+            if ($userData['status'] === 'guest'){
+                $user->decrementRequests();
+            }
+            echo('ok');
+            return;
+        } else {
+            $errorMessage = ServiceMessage::noRequestsErorrMessage();
+            SendResponse::vkSendMessage($peer_id, $errorMessage['text'], $errorMessage['keyboard']);
+            echo('ok');
+            return;
+        }
+
+
     }
 
     private function sendResponse($peer_id, $message, $keyboard = null){
@@ -65,6 +86,7 @@
         $this->logger->handle($message);
     }
 
+        
 
 }
 ?>

@@ -1,7 +1,7 @@
 <?php
 
 class MessageProcess{
-
+    
     private CommandHandler $commandHandler;
     private Logger $logger;
     private UserRepository $userRepository;
@@ -47,7 +47,6 @@ class MessageProcess{
                     return;
                 }
             }
-
             $this->commandHandler->handle($message, $peer_id);
             echo('ok');
             

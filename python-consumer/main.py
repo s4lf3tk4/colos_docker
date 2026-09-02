@@ -23,6 +23,8 @@ async def process_message(message, channel):
         request = data.get("request_text")
         correlation_id = data.get("correlation_id")
         user_id = data.get("user_id")
+        print(f" [x] Получена задача: {request} (corr_id={correlation_id})")
+        print(f"🔍 Длина запроса (символов): {len(request)}")
 
         if not request or not correlation_id or not user_id:
             print(" [!] Сообщение без обязательных полей")

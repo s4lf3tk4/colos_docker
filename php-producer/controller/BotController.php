@@ -54,7 +54,7 @@ class BotController{
         }
         if ($this->isMessageNewRequest($data)) {
             $commands = require_once __DIR__ . '/../config/Commands.php';
-            $commandHandler = new CommandHandler($commands);
+            $commandHandler = new CommandHandler($commands, $this->userRepository);
 
             $newMessage = new MessageProcess($commandHandler, $this->userRepository);
             $newMessage->handleMessage($data);
