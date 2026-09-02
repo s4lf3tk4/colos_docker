@@ -18,7 +18,7 @@ def classify_message(state: SystemState) -> dict:
         user_input = state["current_message"]
 
         if (user_input.startswith("http") or
-            any(user_input.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"])):
+            any(user_input.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".bmp", ".webp"])):
             return {
                 "message_type": "photo",
                 "image_path": user_input,
