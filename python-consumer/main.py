@@ -34,10 +34,17 @@ async def process_message(message, channel):
             result = await graph_start(request, user_id)
             final_response = result["ai_response"]
         except Exception as e:
-            print(f"Ошибка при обработке: {e}")
-            final_response = f"Ошибка при обработке: {e}"
+            if hasattr(e, 'content'):
+                error_text = str(e.content)
+            else:
+                error_text = str(e)
+            final_response = f"Ошибка при обработке: {error_text}"
 
         await send_response_to_rabbit(channel, final_response, correlation_id)
+
+
+
+
 
 async def send_response_to_rabbit(channel, final_response, correlation_id) -> None:
     """Отправка ответа в RabbitMQ"""

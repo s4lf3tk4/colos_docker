@@ -48,16 +48,6 @@ def router_after_classification(state: SystemState):
 
 
 async def food(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Обрабатывает текстовые запросы о питании через Qwen.
-
-    Args:
-        state: содержит "messages" — список результатов анализов и других сообщений - вопросов
-
-    Returns:
-        {"ai_response": [{"role": "assistant", "content": str}],
-         "messages": [{"role": "assistant", "content": str}]}
-    """
     print("В функции FOOD")
     prompt = (
         "Ты — эксперт по питанию и нутрициолог. Твоя задача — отвечать на любые вопросы о еде, "
@@ -68,13 +58,24 @@ async def food(state: Dict[str, Any]) -> Dict[str, Any]:
     messages = state.get("messages", [])
     if not messages:
         error_msg = "Нет сообщений для ответа."
-        return {
-            "ai_response": error_msg,
-        }
+        return {"ai_response": error_msg}
+
+    formatted_messages = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            formatted_messages.append({"role": "user", "content": msg.content})
+        elif isinstance(msg, AIMessage):
+            formatted_messages.append({"role": "assistant", "content": msg.content})
+        elif isinstance(msg, SystemMessage):
+            formatted_messages.append({"role": "system", "content": msg.content})
+        elif isinstance(msg, dict):
+            formatted_messages.append(msg)
+        else:
+            formatted_messages.append({"role": "user", "content": str(msg)})
 
     full_messages = [
         {"role": "system", "content": prompt},
-        *messages
+        *formatted_messages
     ]
 
     payload = {
@@ -89,43 +90,28 @@ async def food(state: Dict[str, Any]) -> Dict[str, Any]:
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=120)
             ) as response:
-
                 if response.status != 200:
                     error_text = await response.text()
                     print(f"❌ Ошибка Qwen: {response.status} - {error_text}")
-                    error_msg = f"Ошибка модели: {response.status}"
-                    return {
-                        "ai_response": error_msg
-                    }
+                    return {"ai_response": f"Ошибка модели: {response.status}"}
 
                 result = await response.json()
                 answer_content = result["choices"][0]["message"]["content"]
-
                 print(f"✅ Ответ от Qwen получен (длина: {len(answer_content)} символов)")
 
-                return {
-                    "ai_response": answer_content,
-                    "messages": [AIMessage(content = answer_content)]
+                return {"ai_response": str(answer_content),
+                        "messages":[AIMessage(content = answer_content)]
                 }
 
     except asyncio.TimeoutError:
         print("Таймаут при запросе к Qwen")
-        error_msg = "Превышено время ожидания ответа от модели."
-        return {
-            "ai_response":error_msg
-        }
+        return {"ai_response": "Превышено время ожидания ответа от модели."}
     except aiohttp.ClientError as e:
         print(f"Ошибка сети при запросе к Qwen: {e}")
-        error_msg = "Ошибка соединения с сервисом ИИ. Попробуйте позже."
-        return {
-            "ai_response":error_msg
-        }
+        return {"ai_response": "Ошибка соединения с сервисом ИИ. Попробуйте позже."}
     except Exception as e:
         print(f"Неизвестная ошибка в food(): {e}")
-        error_msg = f"Ошибка: {str(e)}"
-        return {
-            "ai_response": error_msg,
-        }
+        return {"ai_response": f"Ошибка: {str(e)}"}
 
 def load_image_to_base64(source: str, max_size: int = 600) -> str:
     """

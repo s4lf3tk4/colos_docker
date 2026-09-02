@@ -53,8 +53,8 @@
 }
 
     private function handleUnknownCommand($message, $peer_id){
-        $keyboard = KeyboardBuilder::getMainMenuJson();
-        $this->sendResponse($peer_id, "Неизвестная команда. Используйте кнопки меню.", $keyboard);
+        $this->sendResponse($peer_id, "Отвечаем на ваще сообщение...");
+        
     }
 
     private function sendResponse($peer_id, $message, $keyboard = null){

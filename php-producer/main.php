@@ -21,7 +21,7 @@ $user_id = "hellonigger";
 
 $filePath = $argv[1] ?? '/app/storage/example.jpg';
 $messageBody = json_encode([
-    'request_text' => $filePath,
+    'request_text' => "Что за палочки справа на тарелке?",
     'correlation_id' => $correlationId,
     'user_id' => $user_id
 ]);
