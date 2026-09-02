@@ -62,7 +62,12 @@
         $userData = $user->handle();
         if ($userData['requests'] > 0 || $userData['status'] === 'prem'){
             $text_analysis = new TextAnalysis($message, $peer_id);
-            $text_analysis->getAnalysis();
+            $result = $text_analysis->getAnalysis();
+            SendResponse::vkSendMessage(
+                $peer_id,
+                $result['text'],
+                KeyboardBuilder::getMainMenuJson()
+            );
             if ($userData['status'] === 'guest'){
                 $user->decrementRequests();
             }

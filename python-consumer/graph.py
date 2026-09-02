@@ -49,13 +49,15 @@ def router_after_classification(state: SystemState):
 
 async def food(state: Dict[str, Any]) -> Dict[str, Any]:
     print("В функции FOOD")
+
     prompt = (
-        "Ты — эксперт по питанию и нутрициолог. Твоя задача — отвечать на любые вопросы о еде, "
-        "калориях, БЖУ и здоровом питании. Если вопрос не касается этих тем, вежливо объясни, "
-        "что ты специалист по питанию, и предложи помощь в этой области. Всегда давай полезные "
-        "и точные советы, основанные на научных данных. Отвечай на русском языке."
+        "Ты — эксперт по питанию и нутрициолог. Твоя задача — отвечать на любые вопросы о еде."
+        "Ответ дай в виде короткого текста, "
+        "без лишней информации."
     )
-    messages = messages[-3:] if len(messages) > 3 else messages
+
+    messages = state.get("messages", [])
+    messages = messages[-5:] if len(messages) > 5 else messages
     if not messages:
         error_msg = "Нет сообщений для ответа."
         return {"ai_response": error_msg}
@@ -81,6 +83,9 @@ async def food(state: Dict[str, Any]) -> Dict[str, Any]:
     payload = {
         "model": QWEN_TEXT_MODEL,
         "messages": full_messages,
+        "max_tokens": 500,      # ← уменьшить с 500 до 150
+        "temperature": 0.1,     # ← уменьшить для более коротких ответов
+        "top_p": 0.8,
     }
 
     try:

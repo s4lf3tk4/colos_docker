@@ -9,7 +9,7 @@ class TextAnalysis
     private int $rabbitPort;
     private string $rabbitUser;
     private string $rabbitPass;
-    private int $timeout = 120;  // ← увеличен таймаут
+    private int $timeout = 60;
     private string $text;
     private int $peer_id;
 
@@ -52,10 +52,6 @@ class TextAnalysis
             ]);
 
             $channel->basic_publish($msg, '', 'request_queue');
-            
-            // ========== ЛОГИРОВАНИЕ ==========
-            error_log("📤 Текст отправлен. CorrelationId: " . $correlationId);
-            // ========== КОНЕЦ ==========
 
             $response = null;
             $start = time();
@@ -63,19 +59,8 @@ class TextAnalysis
             while (time() - $start < $this->timeout) {
                 $message = $channel->basic_get('response_queue', true);
                 if ($message) {
-                    $msgCorrelationId = $message->get('correlation_id');
-                    
-                    // ========== ЛОГИРОВАНИЕ ==========
-                    error_log("📥 Получен ответ с correlation_id: " . $msgCorrelationId . ", ожидаем: " . $correlationId);
-                    // ========== КОНЕЦ ==========
-                    
-                    if ($msgCorrelationId === $correlationId) {
+                    if ($message->get('correlation_id') === $correlationId) {
                         $response = json_decode($message->body, true);
-                        
-                        // ========== ЛОГИРОВАНИЕ ==========
-                        error_log("✅ Найден правильный ответ для: " . $correlationId);
-                        // ========== КОНЕЦ ==========
-                        
                         break;
                     }
                 }
@@ -88,11 +73,9 @@ class TextAnalysis
             if ($response && isset($response['result'])) {
                 $result = $response['result'];
                 $output = "";
-
                 if (isset($result['message']) && !empty($result['message'])) {
                     $output .= "\n" . $result['message'] . "\n";
                 }
-
                 return ['text' => $output];
             } else {
                 return ['text' => "❌ Ответ не получен или имеет неверный формат."];
