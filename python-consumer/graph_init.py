@@ -47,7 +47,6 @@ async def graph_start(response_text: str, user_id: str) -> dict:
         "messages": [HumanMessage(content=response_text)],
         "current_message": response_text,
         "message_type": "",
-        "image_path":"",
         "ai_response": ""
 
     }

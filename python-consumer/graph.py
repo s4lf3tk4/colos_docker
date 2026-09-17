@@ -51,40 +51,43 @@ async def food(state: Dict[str, Any]) -> Dict[str, Any]:
     print("В функции FOOD")
 
     prompt = (
-        "Ты — эксперт по питанию и нутрициолог. Твоя задача — отвечать на любые вопросы о еде."
-        "Ответ дай в виде короткого текста, "
-        "без лишней информации."
+        "Ты — эксперт по питанию и нутрициолог. Твоя задача — отвечать на любые вопросы о еде. "
+        "Ответ дай в виде короткого текста, без лишней информации."
     )
 
-    messages = state.get("messages", [])
-    messages = messages[-5:] if len(messages) > 5 else messages
-    if not messages:
-        error_msg = "Нет сообщений для ответа."
-        return {"ai_response": error_msg}
+    current_message = state.get("current_message", "")
+    image_path = state.get("image_path", "")
 
-    formatted_messages = []
-    for msg in messages:
-        if isinstance(msg, HumanMessage):
-            formatted_messages.append({"role": "user", "content": msg.content})
-        elif isinstance(msg, AIMessage):
-            formatted_messages.append({"role": "assistant", "content": msg.content})
-        elif isinstance(msg, SystemMessage):
-            formatted_messages.append({"role": "system", "content": msg.content})
-        elif isinstance(msg, dict):
-            formatted_messages.append(msg)
-        else:
-            formatted_messages.append({"role": "user", "content": str(msg)})
+    # ========== ФОРМИРУЕМ СООБЩЕНИЕ ==========
+    if image_path:
+        # Если есть картинка — передаём её вместе с текстом
+        image_base64 = load_image_to_base64(image_path)
+
+        user_content = [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
+            },
+            {
+                "type": "text",
+                "text": current_message or "Что изображено на фото?"
+            }
+        ]
+    else:
+        # Только текст
+        user_content = current_message
 
     full_messages = [
         {"role": "system", "content": prompt},
-        *formatted_messages
+        {"role": "user", "content": user_content}
     ]
+    # ========== КОНЕЦ ==========
 
     payload = {
         "model": QWEN_TEXT_MODEL,
         "messages": full_messages,
-        "max_tokens": 500,      # ← уменьшить с 500 до 150
-        "temperature": 0.1,     # ← уменьшить для более коротких ответов
+        "max_tokens": 500,
+        "temperature": 0.1,
         "top_p": 0.8,
     }
 
@@ -104,9 +107,8 @@ async def food(state: Dict[str, Any]) -> Dict[str, Any]:
                 answer_content = result["choices"][0]["message"]["content"]
                 print(f"✅ Ответ от Qwen получен (длина: {len(answer_content)} символов)")
 
-                return {"ai_response": str(answer_content),
-                        "messages":[AIMessage(content = answer_content)]
-                }
+                # ========== НЕ СОХРАНЯЕМ ОТВЕТ ==========
+                return {"ai_response": str(answer_content)}
 
     except asyncio.TimeoutError:
         print("Таймаут при запросе к Qwen")
@@ -165,8 +167,8 @@ async def analysis_node(state: Dict[str, Any]) -> Dict[str, Any]:
         state: содержит "image_path" и "current_message"
 
     Returns:
-        {"ai_response": [{"role": "assistant", "content": str}],
-         "messages": [{"role": "assistant", "content": str}]}
+        {"ai_response": [{"role": "assistant", "content": str}]
+         }
     """
 
     print("В функции PHOTO")
@@ -220,8 +222,7 @@ async def analysis_node(state: Dict[str, Any]) -> Dict[str, Any]:
                     print(f"❌ Ошибка Qwen3-VL: {response.status} - {error_text}")
                     error_msg = f"Ошибка модели: {response.status}"
                     return {
-                        "ai_response": [{"role": "assistant", "content": error_msg}],
-                        "messages": [{"role": "assistant", "content": error_msg}]
+                        "ai_response": error_msg
                     }
 
                 result = await response.json()
@@ -230,8 +231,7 @@ async def analysis_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 print(f"✅ Ответ от Qwen3-VL получен (длина: {len(answer_content)} символов)")
 
                 return {
-                    "ai_response": answer_content,
-                    "messages": [AIMessage(content = answer_content)]
+                    "ai_response": answer_content
                 }
 
     except Exception as e:
@@ -239,5 +239,4 @@ async def analysis_node(state: Dict[str, Any]) -> Dict[str, Any]:
         error_msg = f"Ошибка при обработке изображения: {str(e)}"
         return {
             "ai_response": [{"role": "assistant", "content": error_msg}],
-            "messages": [{"role": "assistant", "content": error_msg}]
         }
