@@ -14,6 +14,7 @@ class BotController{
         require_once __DIR__ . '/../Service/ServiceMessage.php';
         require_once __DIR__ . '/../Service/KeyboardBuilder.php';
         require_once __DIR__ . '/../MessageProcessor/CommandHandler.php';
+        require_once __DIR__ . '/../RabbitRpc/RabbitRpc.php';
 
         require_once __DIR__ . '/../MessageProcessor/UserState/UserState.php';
         require_once __DIR__ . '/../MessageProcessor/UserState/UserRepository.php';

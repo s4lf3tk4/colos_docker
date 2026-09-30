@@ -1,34 +1,58 @@
 <?php
-class SendResponse{
-    public static function vkSendMessage($peer_id, $message, $keyboard = null) {
-        try{
-            $token = VK_TOKEN;
-            $params = [
-                'access_token' => $token,
-                'v'           => '5.199',
-                'peer_id'     => $peer_id,
-                'message'     => $message,
-                'random_id'   => rand(1, 1000000)
-            ];
-            if ($keyboard) {
-                $params['keyboard'] = is_array($keyboard) ? json_encode($keyboard) : $keyboard;
+
+class SendResponse
+{
+    private const API_URL = 'https://api.vk.com/method/messages.send';
+    private const API_VERSION = '5.199';
+
+    public static function vkSendMessage($peer_id, $message, $keyboard = null)
+    {
+        try {
+            if ($message === null || $message === '') {
+                return null;   // нечего отправлять
             }
-            $url = "https://api.vk.com/method/messages.send?" . http_build_query($params);
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+
+            $params = [
+                'access_token' => VK_TOKEN,
+                'v'            => self::API_VERSION,
+                'peer_id'      => $peer_id,
+                'message'      => (string)$message,
+                'random_id'    => random_int(1, PHP_INT_MAX),
+            ];
+
+            if (!empty($keyboard)) {
+                $params['keyboard'] = is_array($keyboard)
+                    ? json_encode($keyboard, JSON_UNESCAPED_UNICODE)
+                    : $keyboard;
+            }
+
+            $ch = curl_init(self::API_URL);
+            curl_setopt_array($ch, [
+                CURLOPT_POST           => true,
+                CURLOPT_POSTFIELDS     => http_build_query($params),
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT        => 15,
+                CURLOPT_CONNECTTIMEOUT => 5,
+            ]);
+
             $response = curl_exec($ch);
+            $error = curl_error($ch);
             curl_close($ch);
+
+            if ($response === false) {
+                error_log('[SendResponse] curl: ' . $error);
+                return null;
+            }
+
+            $decoded = json_decode($response, true);
+            if (isset($decoded['error'])) {
+                error_log('[SendResponse] VK error: ' . json_encode($decoded['error'], JSON_UNESCAPED_UNICODE));
+            }
+
             return $response;
-        }catch (\Throwable $e) {
-            file_put_contents(
-            __DIR__ . '/../logs/vkSend_errors.log',
-            date('Y-m-d H:i:s') . " Ошибка: " . $e->getMessage() . "\n",
-            FILE_APPEND
-            );
+        } catch (\Throwable $e) {
+            error_log('[SendResponse] ' . $e->getMessage());
             return null;
         }
     }
 }
-
-?>

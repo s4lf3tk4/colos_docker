@@ -3,25 +3,36 @@
 class PhotoProcess{
 
     private $attachment;
-    private $peer_id;      
+    private $peer_id;
     private Logger $logger;
-    public function __construct($attachment, $peer_id) {   
 
-        require_once __DIR__ . '/FactoryPhotoAnalysis/PhotoAnalysisInterf.php';
-        require_once __DIR__ . '/FactoryPhotoAnalysis/AbstractPhotoAnalysis.php';
-        require_once __DIR__ . '/FactoryPhotoAnalysis/FullAnalysis.php';
+    public function __construct($attachment, $peer_id) {
+
+        require_once __DIR__ . '/FullAnalysis.php';
 
         $this->attachment = $attachment;
-        $this->peer_id = $peer_id;       
-        $this->logger = new Logger('PhotoProcess_error.log');               
+        $this->peer_id = $peer_id;
+        $this->logger = new Logger('PhotoProcess_error.log');
     }
+
     private function extractPhotoUrl($attachments){
-        foreach ($attachments as $attach) {
-            if ($attach['type'] === 'photo') {
-                $sizes = $attach['photo']['sizes'];
-                return end($sizes)['url'];
+        foreach ((array)$attachments as $attach) {
+            if (($attach['type'] ?? null) !== 'photo') {
+                continue;
+            }
+
+            $sizes = $attach['photo']['sizes'] ?? [];
+            if (!is_array($sizes) || $sizes === []) {
+                $this->log("Вложение photo без sizes, пропускаю");
+                continue;
+            }
+
+            $url = end($sizes)['url'] ?? null;
+            if (!empty($url)) {
+                return $url;
             }
         }
+
         return null;
     }
 
@@ -48,11 +59,9 @@ class PhotoProcess{
         }
         $this->processPhotoMessage($photoURL);
     }
-        
+
     private function log($message){
         $this->logger->handle($message);
     }
-    
-}
 
-?>
+}

@@ -32,12 +32,14 @@ class MessageProcess{
             if ($this->hasPhoto($attachments)) {
                 $user = new UserState($peer_id, $this->userRepository);
                 $userData = $user->handle();
-                if ($userData['requests'] > 0 || $userData['status'] === 'prem'){
+                if ($userData['requests'] > 0 || $userData['status'] === 'prem') {
                     $photo = new PhotoProcess($attachments, $peer_id);
-                    $photo->processPhoto();
-                    if ($userData['status'] === 'guest'){
+                    $ok = $photo->processPhoto();
+
+                    if ($ok && $userData['status'] === 'guest') {
                         $user->decrementRequests();
                     }
+
                     echo('ok');
                     return;
                 } else {
