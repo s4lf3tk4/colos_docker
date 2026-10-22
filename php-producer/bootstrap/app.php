@@ -11,7 +11,11 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        // VK Callback API не присылает CSRF-токен
+        $middleware->validateCsrfTokens(except: [
+            '/',
+            'vk/*',
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
