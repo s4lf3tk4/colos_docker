@@ -73,3 +73,12 @@ Thumbs.db
 *.temp
 cache/
 !.env.*.example
+# -------------------------------
+# Laravel (php-producer)
+# -------------------------------
+!**/.env.example
+!php-producer/composer.lock
+!php-producer/storage/
+!php-producer/storage/**
+!php-producer/bootstrap/cache/
+!php-producer/bootstrap/cache/.gitignore
