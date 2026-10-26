@@ -27,7 +27,7 @@ final class AppServiceProvider extends ServiceProvider
         $this->app->singleton(
             EventDeduplicator::class,
             static fn (): EventDeduplicator => new EventDeduplicator(
-                ttlSeconds: (int) config('vk.event_dedupe_seconds', 60),
+                ttlSeconds: (int) config('vk.event_dedupe_seconds', 86400),
             ),
         );
     }

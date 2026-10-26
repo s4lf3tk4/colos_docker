@@ -9,6 +9,6 @@ return [
     // Если задан — проверяем поле secret во входящем событии.
     'secret' => env('VK_SECRET'),
 
-    // Окно защиты от повторной доставки события (в legacy было 60 с).
-    'event_dedupe_seconds' => (int) env('VK_EVENT_DEDUPE_SECONDS', 60),
+        // Окно защиты от повторной доставки события: сутки.
+    'event_dedupe_seconds' => (int) env('VK_EVENT_DEDUPE_SECONDS', 86400),
 ];

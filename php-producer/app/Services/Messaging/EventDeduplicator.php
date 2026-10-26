@@ -9,13 +9,16 @@ use Illuminate\Support\Facades\Log;
 use Throwable;
 
 /**
- * VK может доставить одно событие несколько раз. В legacy это решалось
- * JSON-файлом cache/events.json; здесь — атомарный lock файлового кеша на TTL окна.
+ * VK может доставить одно и то же событие повторно.
+ * Ключ живёт в Redis ровно сутки: SET NX (атомарно) + TTL.
+ * Первый запрос создаёт ключ и обрабатывается, повторы в течение суток — дубли.
  */
 final class EventDeduplicator
 {
+    private const STORE = 'redis';
+
     public function __construct(
-        private readonly int $ttlSeconds = 60,
+        private readonly int $ttlSeconds = 86400,
     ) {}
 
     public function isDuplicate(string $eventId): bool
@@ -25,11 +28,17 @@ final class EventDeduplicator
         }
 
         try {
-            // Первый, кто взял lock, обрабатывает событие; остальные — дубли.
-            return ! Cache::lock('vk:event:'.$eventId, $this->ttlSeconds)->get();
+            // add() атомарно возвращает false, если ключ уже существует — это дубль.
+            return ! Cache::store(self::STORE)->add(
+                'vk:event:'.$eventId,
+                1,
+                now()->addSeconds($this->ttlSeconds),
+            );
         } catch (Throwable $e) {
-            // Ошибка кеша не блокирует обработку (как и в legacy).
-            Log::warning('EventDeduplicator: защита от дублей недоступна', ['error' => $e->getMessage()]);
+            // Redis недоступен — не блокируем обработку, как и раньше.
+            Log::warning('EventDeduplicator: Redis недоступен, защита от дублей отключена', [
+                'error' => $e->getMessage(),
+            ]);
 
             return false;
         }
