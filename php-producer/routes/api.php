@@ -12,4 +12,5 @@ Route::get('/', fn () => response()->json([
 
 Route::get('/health', fn () => response()->json(['status' => 'ok']));
 
-Route::post('/', VkWebhookController::class);
+// URL из настроек Callback API может быть и корнем, и /vk/callback — поддерживаем оба.
+Route::post('/vk/callback', VkWebhookController::class);

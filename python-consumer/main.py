@@ -1,115 +1,224 @@
 import asyncio
 import json
-from aio_pika import Message, DeliveryMode
-from rabbitmq import get_connection, declare_queues
-from serializer import convert_to_serializable
+import logging
+import os
+import signal
+
+from aio_pika import DeliveryMode, Message
+from aio_pika.abc import AbstractChannel, AbstractIncomingMessage, AbstractQueue
+
+from core import RABBITMQ_PREFETCH, RABBITMQ_RESPONSE_QUEUE
+from core.images import close_session as close_image_session
+from core.redis_client import close_redis, ping_redis
+from graph import close_llm_session
 from graph_init import graph_start
+from rabbitmq import connect, declare_request_queue, declare_response_queue
+
+log = logging.getLogger("consumer")
+
+MAX_CONCURRENT = RABBITMQ_PREFETCH
+PUBLISH_ATTEMPTS = 2
+SHUTDOWN_TIMEOUT = 30.0
+
+ERROR_REPLY = "Сервис анализа временно недоступен. Попробуйте повторить запрос позже."
+INVALID_REPLY = "Некорректный запрос: нужны request_text, correlation_id и user_id."
+EMPTY_REPLY = "Не удалось получить ответ. Попробуйте переформулировать запрос."
 
 
-MAX_CONCURRENT = 7
-semaphore = asyncio.Semaphore(MAX_CONCURRENT)
+def setup_logging() -> None:
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    )
 
-async def process_message(message, channel):
-    """Обработка одного сообщения"""
-    async with message.process(requeue=False):
-        body = message.body.decode()
 
+def _correlation_from_properties(message: AbstractIncomingMessage) -> str | None:
+    value = message.correlation_id
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value or None
+
+
+def _install_signal_handlers(stop: asyncio.Event) -> None:
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
         try:
-            data = json.loads(body)
-        except json.JSONDecodeError:
-            print(" [!] Получено невалидное JSON-сообщение, пропускаем")
-            return
-
-        request = data.get("request_text")
-        correlation_id = data.get("correlation_id")
-        user_id = data.get("user_id")
-        print(f" [x] Получена задача: {request} (corr_id={correlation_id})")
-        print(f"🔍 Длина запроса (символов): {len(request)}")
-
-        if not request or not correlation_id or not user_id:
-            print(" [!] Сообщение без обязательных полей")
-            return
-
-        print(f" [x] Получена задача: {request} (corr_id={correlation_id})")
-
-        try:
-            result = await graph_start(request, user_id)
-            final_response = result["ai_response"]
-        except Exception as e:
-            if hasattr(e, 'content'):
-                error_text = str(e.content)
-            else:
-                error_text = str(e)
-            final_response = f"Ошибка при обработке: {error_text}"
-
-        await send_response_to_rabbit(channel, final_response, correlation_id)
-
-
-
-
-
-async def send_response_to_rabbit(channel, final_response, correlation_id) -> None:
-    """Отправка ответа в RabbitMQ"""
-    try:
-        response = {
-            "correlation_id": correlation_id,
-            "status": "ok",
-            "result": {
-                "message": final_response,
-            }
-        }
-
-        response_body = json.dumps(response, default=convert_to_serializable).encode()
-        await channel.default_exchange.publish(
-            Message(
-                body=response_body,
-                delivery_mode=DeliveryMode.PERSISTENT,
-                correlation_id=correlation_id
-            ),
-            routing_key="response_queue"
-        )
-        print(f" [x] Ответ отправлен для corr_id={correlation_id}")
-    except Exception as e:
-        print(f"Ошибка при отправке: {e}")
-
-async def main():
-    """Главная функция"""
-    connection = await get_connection()
-    async with connection:
-        channel = await connection.channel()
-
-        await channel.set_qos(prefetch_count=MAX_CONCURRENT)
-
-        queue = await declare_queues(channel)
-
-        workers = []
-        for i in range(MAX_CONCURRENT):
-            worker = asyncio.create_task(worker_loop(i, queue, channel))
-            workers.append(worker)
-
-        print(f"Запущено {MAX_CONCURRENT} воркеров")
-
-        await asyncio.gather(*workers)
-
-async def worker_loop(worker_id, queue, channel):
-    """Воркер, который постоянно берет сообщения из очереди"""
-    print(f"Воркер {worker_id} запущен")
-
-    async with queue.iterator() as queue_iter:
-        async for message in queue_iter:
+            loop.add_signal_handler(sig, stop.set)
+        except (NotImplementedError, AttributeError):      # Windows
             try:
-                async with semaphore:
-                    await process_message(message, channel)
-            except asyncio.CancelledError:
-                print(f"Воркер {worker_id} остановлен")
-                return
-            except Exception as e:
-                print(f"❌ Воркер {worker_id} ошибка обработки: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
+                signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop.set))
+            except (ValueError, OSError):
+                pass
+
+
+async def publish_response(
+    channel: AbstractChannel,
+    correlation_id: str | None,
+    status: str,
+    message: str,
+) -> None:
+    body = json.dumps(
+        {
+            "correlation_id": correlation_id,
+            "status": status,
+            "result": {"message": message},
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    last_error: Exception | None = None
+    for attempt in range(1, PUBLISH_ATTEMPTS + 1):
+        try:
+            await channel.default_exchange.publish(
+                Message(
+                    body=body,
+                    content_type="application/json",
+                    delivery_mode=DeliveryMode.PERSISTENT,
+                    correlation_id=correlation_id,
+                ),
+                routing_key=RABBITMQ_RESPONSE_QUEUE,
+            )
+            log.info("ответ отправлен corr=%s status=%s", correlation_id, status)
+            return
+        except Exception as exc:
+            last_error = exc
+            log.warning("публикация не удалась (попытка %d/%d): %s",
+                        attempt, PUBLISH_ATTEMPTS, exc)
+            await asyncio.sleep(0.2 * attempt)
+
+    raise RuntimeError(f"публикация ответа не удалась: {last_error}")
+
+
+async def _reply_or_requeue(
+    message: AbstractIncomingMessage,
+    channel: AbstractChannel,
+    correlation_id: str | None,
+    text: str,
+) -> None:
+    """Гарантируем клиенту ответ. Если ответ не ушёл — возвращаем сообщение в очередь."""
+    try:
+        await publish_response(channel, correlation_id, "error", text)
+        await message.ack()
+    except Exception:
+        log.exception("не удалось ответить corr=%s, возвращаю сообщение в очередь", correlation_id)
+        await message.nack(requeue=True)
+
+
+async def handle_message(
+    message: AbstractIncomingMessage,
+    channel: AbstractChannel,
+) -> None:
+    correlation_id = _correlation_from_properties(message)
+
+    try:
+        payload = json.loads(message.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        log.warning("некорректный JSON corr=%s: %s", correlation_id, exc)
+        await _reply_or_requeue(message, channel, correlation_id, INVALID_REPLY)
+        return
+
+    if not isinstance(payload, dict):
+        log.warning("ожидался объект JSON corr=%s", correlation_id)
+        await _reply_or_requeue(message, channel, correlation_id, INVALID_REPLY)
+        return
+
+    correlation_id = str(payload.get("correlation_id") or correlation_id or "") or None
+    text = payload.get("request_text")
+    user_id = payload.get("user_id")
+
+    if (
+        correlation_id is None
+        or not isinstance(text, str)
+        or not text.strip()
+        or user_id is None
+        or str(user_id) == ""
+    ):
+        log.warning("некорректное сообщение: corr=%s, поля=%s",
+                    correlation_id, sorted(payload))
+        await _reply_or_requeue(message, channel, correlation_id, INVALID_REPLY)
+        return
+
+    log.info("принято corr=%s uid=%s len=%d", correlation_id, user_id, len(text))
+
+    try:
+        result = await graph_start(text.strip(), str(user_id))
+        answer = str(result.get("ai_response") or "").strip() or EMPTY_REPLY
+        await publish_response(channel, correlation_id, "ok", answer)
+        await message.ack()
+    except Exception:
+        log.exception("ошибка обработки corr=%s", correlation_id)
+        await _reply_or_requeue(message, channel, correlation_id, ERROR_REPLY)
+
+
+async def worker(
+    worker_id: int,
+    queue: AbstractQueue,
+    channel: AbstractChannel,
+) -> None:
+    log.info("воркер %d запущен", worker_id)
+    async with queue.iterator() as iterator:
+        async for message in iterator:
+            try:
+                await handle_message(message, channel)
+            except Exception:
+                log.exception("воркер %d: необработанная ошибка", worker_id)
+
+
+async def main() -> None:
+    setup_logging()
+    stop = asyncio.Event()
+    _install_signal_handlers(stop)
+
+    connection = await connect()
+    try:
+        async with connection:
+            publish_channel = await connection.channel()
+            await declare_response_queue(publish_channel)
+
+            consume_channel = await connection.channel()
+            await consume_channel.set_qos(prefetch_count=MAX_CONCURRENT)
+            queue = await declare_request_queue(consume_channel)
+
+            if not await ping_redis():
+                log.warning("Redis недоступен: память фото отключена, текст работает")
+
+            workers = [
+                asyncio.create_task(worker(index, queue, publish_channel), name=f"worker-{index}")
+                for index in range(MAX_CONCURRENT)
+            ]
+            log.info("запущено %d воркеров (prefetch=%d)", MAX_CONCURRENT, MAX_CONCURRENT)
+
+            stop_waiter = asyncio.create_task(stop.wait(), name="stop-waiter")
+            done, _ = await asyncio.wait(
+                [*workers, stop_waiter], return_when=asyncio.FIRST_COMPLETED
+            )
+
+            if stop_waiter in done:
+                log.info("получен сигнал остановки, дожидаюсь текущих сообщений")
+            else:
+                log.error("воркер завершился аварийно, останавливаю сервис")
+
+            for task in workers:
+                task.cancel()
+            stop_waiter.cancel()
+
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*workers, stop_waiter, return_exceptions=True),
+                    timeout=SHUTDOWN_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                log.warning("воркеры не завершились за %.0f с", SHUTDOWN_TIMEOUT)
+    finally:
+        await close_image_session()
+        await close_llm_session()
+        await close_redis()
+        log.info("потребитель остановлен")
+
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Остановка потребителя")
+        log.info("остановлено пользователем")

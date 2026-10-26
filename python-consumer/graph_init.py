@@ -1,55 +1,31 @@
-import aiosqlite
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, START, StateGraph
-from langchain_core.messages import HumanMessage
+
 from core import SystemState
-from graph import (
-    classify_message,
-    router_after_classification,
-    food,
-    analysis_node
-)
-
-graph = StateGraph(SystemState)
-
-app = None
-
-async def init_app():
-    global app
-    db = await aiosqlite.connect("checkpoints.db")
-    checkpointer = AsyncSqliteSaver(db)
-    app = graph.compile(checkpointer=checkpointer)
-    return app
+from graph import analysis_node, classify_message, food, route_after_classification
 
 
-graph.add_node("classify_message", classify_message)
-graph.add_node("analysis_node", analysis_node)
-graph.add_node("food", food)
+def build_graph():
+    builder = StateGraph(SystemState)
+    builder.add_node("classify_message", classify_message)
+    builder.add_node("analysis_node", analysis_node)
+    builder.add_node("food", food)
+
+    builder.add_edge(START, "classify_message")
+    builder.add_conditional_edges(
+        "classify_message",
+        route_after_classification,
+        {"photo": "analysis_node", "food": "food", "error": END},
+    )
+    builder.add_edge("analysis_node", END)
+    builder.add_edge("food", END)
+    return builder.compile()
 
 
-graph.add_edge(START, "classify_message")
-graph.add_conditional_edges(
-    "classify_message",
-    router_after_classification,
-    {
-        "photo": "analysis_node",
-        "food": "food"
-    }
-)
-graph.add_edge("analysis_node", END)
-graph.add_edge("food", END)
+app = build_graph()
 
-async def graph_start(response_text: str, user_id: str) -> dict:
-    global app
-    if app is None:
-        await init_app()
-    initial_state = {
-        "messages": [HumanMessage(content=response_text)],
-        "current_message": response_text,
-        "message_type": "",
-        "ai_response": ""
 
-    }
-    config = {"configurable": {"thread_id": user_id}}
-    result = await app.ainvoke(initial_state, config=config)
-    return result
+async def graph_start(message_text: str, user_id: str) -> dict:
+    """Один запрос — один вызов. Никакой персистентности: память картинки в Redis."""
+    return await app.ainvoke(
+        {"current_message": message_text, "user_id": str(user_id)}
+    )

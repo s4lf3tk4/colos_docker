@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\LogHttpRequest;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -14,10 +15,8 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: '',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Вебхук VK работает без cookies, сессий и CSRF.
-        // Группа задана явно, чтобы в неё не попал throttle:api
-        // (для него в приложении не зарегистрирован RateLimiter).
         $middleware->group('api', [
+            LogHttpRequest::class,
             SubstituteBindings::class,
         ]);
     })

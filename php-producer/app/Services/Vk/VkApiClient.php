@@ -75,7 +75,7 @@ final class VkApiClient
 
             return false;
         }
-
+        Log::info('VK: messages.send выполнен', ['peer_id' => $peerId]);
         return true;
     }
 }

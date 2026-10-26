@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+*.db
+checkpoints.db*
+.env
+.env.*
+!.env.*.example
+.venv/
+venv/
+.git/
+.ruff_cache/
+.pytest_cache/

@@ -1,242 +1,196 @@
-from core import SystemState, QWEN_PICT_URL, QWEN_PICT_MODEL, QWEN_TEXT_MODEL, QWEN_TEXT_URL
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
-
-import base64
-import requests
-from PIL import Image
-from io import BytesIO
+import asyncio
+import logging
+import re
+import urllib.parse
+from typing import Any
 
 import aiohttp
-import asyncio
-from typing import List, Dict, Any, Optional
 
-def classify_message(state: SystemState) -> dict:
-    """Детерминированная классификация сообщения по расширению:
-        food (анализ текста);
-        photo(ссылка на картинку -> анализ картинки ИИ)"""
-    try:
-        user_input = state["current_message"]
+from core import (
+    LLM_MAX_TOKENS,
+    LLM_RETRIES,
+    LLM_TIMEOUT,
+    QWEN_PICT_MODEL,
+    QWEN_PICT_URL,
+    QWEN_TEXT_MODEL,
+    QWEN_TEXT_URL,
+    SystemState,
+)
+from core.images import ALLOWED_HOSTS, recall_image, store_last_image, to_data_url
 
-        if (user_input.startswith("http") or
-            any(user_input.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".bmp", ".webp"])):
-            return {
-                "message_type": "photo",
-                "image_path": user_input,
-            }
-        else:
-            return {
-                "message_type": "food",
-            }
+log = logging.getLogger(__name__)
 
+FOOD_PROMPT = (
+    "Ты — эксперт по питанию и нутрициолог. Отвечай на вопросы о еде кратко и по делу, "
+    "без лишней информации. Если к вопросу приложено фото блюда — опирайся на него."
+)
+PHOTO_PROMPT = (
+    "Ты — помощник по анализу еды. Опиши, что изображено на фотографии: назови блюдо, "
+    "перечисли основные ингредиенты, укажи примерную калорийность на 100 г или на порцию. "
+    "Ответ дай коротким текстом, без лишней информации."
+)
+PHOTO_QUESTION = "Что это за блюдо и какова его примерная калорийность?"
 
-    except Exception as e:
-        print(f"Ошибка классификации: {e}. Используем 'food' по умолчанию.", flush=True)
-        message_type = "food"
-        return {
-            "message_type": "food",
-        }
+USER_ERROR = "Сервис анализа временно недоступен. Попробуйте повторить запрос позже."
+IMAGE_TROUBLE = "Не удалось загрузить изображение. Пришлите фото ещё раз."
 
+_URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
+_IMAGE_EXT_RE = re.compile(r"\.(jpe?g|png|bmp|webp|gif|heic|heif)$", re.IGNORECASE)
 
-def router_after_classification(state: SystemState):
-    """Маршрутизатор после классификации"""
-    message_type = state["message_type"]
-    print(f"В router {message_type}")
-    if message_type == "photo":
-        return "photo"
-    else:
-        return "food"
+_session: aiohttp.ClientSession | None = None
 
 
-async def food(state: Dict[str, Any]) -> Dict[str, Any]:
-    print("В функции FOOD")
+class LLMError(RuntimeError):
+    """Модель недоступна или ответила некорректно."""
 
-    prompt = (
-        "Ты — эксперт по питанию и нутрициолог. Твоя задача — отвечать на любые вопросы о еде. "
-        "Ответ дай в виде короткого текста, без лишней информации."
-    )
 
-    current_message = state.get("current_message", "")
-    image_path = state.get("image_path", "")
+def get_session() -> aiohttp.ClientSession:
+    global _session
+    if _session is None or _session.closed:
+        _session = aiohttp.ClientSession()
+    return _session
 
-    # ========== ФОРМИРУЕМ СООБЩЕНИЕ ==========
-    if image_path:
-        # Если есть картинка — передаём её вместе с текстом
-        image_base64 = load_image_to_base64(image_path)
 
-        user_content = [
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-            },
-            {
-                "type": "text",
-                "text": current_message or "Что изображено на фото?"
-            }
-        ]
-    else:
-        # Только текст
-        user_content = current_message
+async def close_llm_session() -> None:
+    global _session
+    if _session is not None and not _session.closed:
+        await _session.close()
+    _session = None
 
-    full_messages = [
-        {"role": "system", "content": prompt},
-        {"role": "user", "content": user_content}
-    ]
-    # ========== КОНЕЦ ==========
 
+def is_image_url(message: str) -> bool:
+    candidate = (message or "").strip()
+    if not _URL_RE.match(candidate):
+        return False
+    parsed = urllib.parse.urlparse(candidate)
+    host = (parsed.hostname or "").lower()
+    if any(host == allowed or host.endswith("." + allowed) for allowed in ALLOWED_HOSTS):
+        return True
+    return bool(_IMAGE_EXT_RE.search(parsed.path))
+
+
+async def call_llm(url: str, model: str, prompt: str, content: Any) -> str:
     payload = {
-        "model": QWEN_TEXT_MODEL,
-        "messages": full_messages,
-        "max_tokens": 500,
+        "model": model,
+        "messages": [
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": content},
+        ],
+        "max_tokens": LLM_MAX_TOKENS,
         "temperature": 0.1,
         "top_p": 0.8,
     }
+    attempts = LLM_RETRIES + 1
+    last_error = "неизвестная ошибка"
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                QWEN_TEXT_URL,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=120)
-            ) as response:
+    for attempt in range(1, attempts + 1):
+        try:
+            timeout = aiohttp.ClientTimeout(total=LLM_TIMEOUT)
+            async with get_session().post(url, json=payload, timeout=timeout) as response:
                 if response.status != 200:
-                    error_text = await response.text()
-                    print(f"❌ Ошибка Qwen: {response.status} - {error_text}")
-                    return {"ai_response": f"Ошибка модели: {response.status}"}
+                    body = (await response.text())[:300]
+                    last_error = f"HTTP {response.status}: {body}"
+                    if 400 <= response.status < 500:
+                        raise LLMError(last_error)   # повторять бессмысленно
+                    log.warning("модель ответила %s (попытка %d/%d)",
+                                response.status, attempt, attempts)
+                else:
+                    data = await response.json(content_type=None)
+                    try:
+                        answer = data["choices"][0]["message"]["content"]
+                    except (KeyError, IndexError, TypeError) as exc:
+                        last_error = f"некорректный ответ модели: {exc}"
+                        log.warning(last_error)
+                    else:
+                        answer = str(answer or "").strip()
+                        if answer:
+                            return answer
+                        last_error = "модель вернула пустой ответ"
+        except LLMError:
+            raise
+        except asyncio.TimeoutError:
+            last_error = f"таймаут {LLM_TIMEOUT:.0f} с"
+            log.warning("таймаут модели (попытка %d/%d)", attempt, attempts)
+        except aiohttp.ClientError as exc:
+            last_error = f"сеть: {exc}"
+            log.warning("сетевая ошибка модели (попытка %d/%d): %s", attempt, attempts, exc)
 
-                result = await response.json()
-                answer_content = result["choices"][0]["message"]["content"]
-                print(f"✅ Ответ от Qwen получен (длина: {len(answer_content)} символов)")
+        if attempt < attempts:
+            await asyncio.sleep(0.5 * attempt)
 
-                # ========== НЕ СОХРАНЯЕМ ОТВЕТ ==========
-                return {"ai_response": str(answer_content)}
+    raise LLMError(last_error)
 
-    except asyncio.TimeoutError:
-        print("Таймаут при запросе к Qwen")
-        return {"ai_response": "Превышено время ожидания ответа от модели."}
-    except aiohttp.ClientError as e:
-        print(f"Ошибка сети при запросе к Qwen: {e}")
-        return {"ai_response": "Ошибка соединения с сервисом ИИ. Попробуйте позже."}
-    except Exception as e:
-        print(f"Неизвестная ошибка в food(): {e}")
-        return {"ai_response": f"Ошибка: {str(e)}"}
 
-def load_image_to_base64(source: str, max_size: int = 600) -> str:
-    """
-    Загружает изображение с принудительным сжатием
-    """
+async def _recall(user_id: str) -> bytes | None:
+    """Redis упал — не роняем запрос, просто отвечаем без картинки."""
     try:
-
-        if source.startswith(("http://", "https://")):
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                'Referer': 'https://vk.com/',
-                'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
-                'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7'
-            }
-            response = requests.get(source, headers=headers, timeout=30)
-            response.raise_for_status()
-            img = Image.open(BytesIO(response.content))
-        else:
-            img = Image.open(source)
+        return await recall_image(user_id)
+    except Exception as exc:
+        log.warning("Redis недоступен, работаю без картинки: %s", exc)
+        return None
 
 
-        ratio = min(max_size / img.size[0], max_size / img.size[1])
-        if ratio < 1:
-            new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
-            img = img.resize(new_size, Image.Resampling.LANCZOS)
+async def classify_message(state: SystemState) -> dict:
+    text = (state.get("current_message") or "").strip()
+    user_id = state.get("user_id") or ""
 
-        # Конвертация в RGB
-        if img.mode in ('RGBA', 'LA', 'P'):
-            img = img.convert('RGB')
-
-        buffer = BytesIO()
-        img.save(buffer, format='JPEG', quality=75, optimize=True)
-        image_bytes = buffer.getvalue()
-
-        return base64.b64encode(image_bytes).decode('utf-8')
-
-    except Exception as e:
-        print(f"❌ Ошибка: {e}", flush=True)
-        raise ValueError(f"Не удалось загрузить изображение: {e}")
-# AI analyze
-async def analysis_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Обрабатывает запросы с изображениями через Qwen3-VL.
-
-    Args:
-        state: содержит "image_path" и "current_message"
-
-    Returns:
-        {"ai_response": [{"role": "assistant", "content": str}]
-         }
-    """
-
-    print("В функции PHOTO")
-
-    prompt = (
-        "Ты — помощник по анализу еды. Опиши, что изображено на фотографии. "
-        "Назови блюдо, перечисли основные ингредиенты, укажи примерную калорийность "
-        "в килокалориях на 100 грамм или на порцию. Ответ дай в виде короткого текста, "
-        "без лишней информации."
-    )
-    image_path = state.get("image_path", "")
-
-
-    if not image_path:
-        error_msg = "Путь к изображению не указан."
-        return {
-            "ai_response": error_msg,
-        }
-
-    image_base64 = load_image_to_base64(image_path)
-
-    payload = {
-        "model": QWEN_PICT_MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}
-                    },
-                    {
-                        "type": "text",
-                        "text": prompt
-                    }
-                ]
-            }
-        ],
-    }
+    if not is_image_url(text):
+        return {"message_type": "food"}
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                QWEN_PICT_URL,
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=120)
-            ) as response:
+        await store_last_image(user_id, text)
+    except Exception as exc:
+        log.warning("не удалось принять фото uid=%s: %s", user_id, exc)
+        return {"message_type": "error", "ai_response": IMAGE_TROUBLE}
 
-                if response.status != 200:
-                    error_text = await response.text()
-                    print(f"❌ Ошибка Qwen3-VL: {response.status} - {error_text}")
-                    error_msg = f"Ошибка модели: {response.status}"
-                    return {
-                        "ai_response": error_msg
-                    }
+    return {"message_type": "photo"}
 
-                result = await response.json()
-                answer_content = result["choices"][0]["message"]["content"]
 
-                print(f"✅ Ответ от Qwen3-VL получен (длина: {len(answer_content)} символов)")
+def route_after_classification(state: SystemState) -> str:
+    message_type = state.get("message_type") or "food"
+    if message_type == "photo":
+        return "photo"
+    if message_type == "error":
+        return "error"
+    return "food"
 
-                return {
-                    "ai_response": answer_content
-                }
 
-    except Exception as e:
-        print(f"Ошибка в photo(): {e}")
-        error_msg = f"Ошибка при обработке изображения: {str(e)}"
-        return {
-            "ai_response": [{"role": "assistant", "content": error_msg}],
-        }
+async def food(state: SystemState) -> dict:
+    """Есть картинка в Redis — отвечаем по ней; нет — отвечаем как нутрициолог."""
+    text = (state.get("current_message") or "").strip()
+    jpeg = await _recall(state.get("user_id") or "")
+
+    if jpeg:
+        content = [
+            {"type": "image_url", "image_url": {"url": to_data_url(jpeg)}},
+            {"type": "text", "text": text or "Что изображено на фото? Оцени калорийность."},
+        ]
+    else:
+        content = text or "Что можно съесть на завтрак?"
+
+    try:
+        answer = await call_llm(QWEN_TEXT_URL, QWEN_TEXT_MODEL, FOOD_PROMPT, content)
+    except LLMError as exc:
+        log.error("food: %s", exc)
+        return {"ai_response": USER_ERROR}
+
+    return {"ai_response": answer}
+
+
+async def analysis_node(state: SystemState) -> dict:
+    jpeg = await _recall(state.get("user_id") or "")
+    if not jpeg:
+        return {"ai_response": IMAGE_TROUBLE}
+
+    content = [
+        {"type": "image_url", "image_url": {"url": to_data_url(jpeg)}},
+        {"type": "text", "text": PHOTO_QUESTION},
+    ]
+
+    try:
+        answer = await call_llm(QWEN_PICT_URL, QWEN_PICT_MODEL, PHOTO_PROMPT, content)
+    except LLMError as exc:
+        log.error("analysis_node: %s", exc)
+        return {"ai_response": USER_ERROR}
+
+    return {"ai_response": answer}

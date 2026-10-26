@@ -31,13 +31,21 @@ final class MessageHandler
     public function handle(array $payload): void
     {
         $message = IncomingMessage::fromVkPayload($payload);
+        Log::info('VK: входящее событие', [
+            'event_id' => $message->eventId,
+            'peer_id'  => $message->peerId,
+            'photo'    => $message->hasPhoto(),
+            'outgoing' => $message->isOutgoing,
+        ]);
 
         try {
             if ($message->isOutgoing) {
                 return;
             }
 
-            if ($this->deduplicator->isDuplicate($message->eventId)) {
+            if ($this->deduplicator->isDuplicate($message->eventId)) {          
+                Log::info('VK: событие уже обработано, пропуск', ['event_id' => $message->eventId]);
+
                 return;
             }
 
@@ -83,6 +91,11 @@ final class MessageHandler
 
         $result = $this->analysis->analyze($photoUrl, $peerId);
 
+        Log::info('VK: анализ готов', [
+            'peer_id' => $message->peerId,
+            'ok'      => $result->ok,
+            'symbols' => mb_strlen($result->text),
+        ]);
         $this->vk->sendMessage(
             $message->peerId,
             new OutgoingMessage($result->text, KeyboardBuilder::mainMenu()),
